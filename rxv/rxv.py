@@ -24,6 +24,8 @@ MenuStatus = namedtuple("MenuStatus", "ready layer name current_line max_line cu
 GetParam = 'GetParam'
 YamahaCommand = '<YAMAHA_AV cmd="{command}">{payload}</YAMAHA_AV>'
 MainZone = '<Main_Zone>{request_text}</Main_Zone>'
+Zone2 = '<Zone_2>{request_text}</Zone_2>'
+Zone3 = '<Zone_3>{request_text}</Zone_3>'
 BasicStatusGet = '<Basic_Status>GetParam</Basic_Status>'
 PowerControl = '<Power_Control><Power>{state}</Power></Power_Control>'
 PowerControlSleep = '<Power_Control><Sleep>{sleep_value}</Sleep></Power_Control>'
@@ -44,7 +46,8 @@ SelectNetRadioLine = '<NET_RADIO><List_Control><Direct_Sel>Line_{lineno}'\
 
 class RXV(object):
 
-    def __init__(self, ctrl_url, model_name="Unknown", friendly_name='Unknown'):
+    def __init__(self, ctrl_url, model_name="Unknown",
+                 zone="Main_Zone", friendly_name='Unknown'):
         if re.match(r"\d{1,3}\.\d{1,3}\.\d{1,3}.\d{1,3}", ctrl_url):
             # backward compatibility: accept ip address as a contorl url
             warnings.warn("Using IP address as a Control URL is deprecated")
@@ -53,14 +56,17 @@ class RXV(object):
         self.model_name = model_name
         self.friendly_name = friendly_name
         self._inputs_cache = None
+        self._zone = zone
 
     def __unicode__(self):
-        return u'''<{cls} model_name="{model}" ctrl_url="{ctrl_url}" at {addr}>'''.format(
-            cls=self.__class__.__name__,
-            model=self.model_name,
-            ctrl_url=self.ctrl_url,
-            addr=hex(id(self))
-        )
+        return ('<{cls} model_name="{model}" zone="{zone}" '
+                'ctrl_url="{ctrl_url}" at {addr}>'.format(
+                    cls=self.__class__.__name__,
+                    zone=self._zone,
+                    model=self.model_name,
+                    ctrl_url=self.ctrl_url,
+                    addr=hex(id(self))
+                ))
 
     def __str__(self):
         return self.__unicode__()
@@ -70,7 +76,12 @@ class RXV(object):
 
     def _request(self, command, request_text, main_zone=True):
         if main_zone:
-            payload = MainZone.format(request_text=request_text)
+            if self._zone == "Main_Zone":
+                payload = MainZone.format(request_text=request_text)
+            elif self._zone == "Zone_2":
+                payload = Zone2.format(request_text=request_text)
+            elif self._zone == "Zone_3":
+                payload = Zone3.format(request_text=request_text)
         else:
             payload = request_text
 
@@ -85,13 +96,16 @@ class RXV(object):
             raise ResponseException(res.content)
         return response
 
+    def zone(self, attr):
+        return ("%s/%s" % (self._zone, attr))
+
     @property
     def basic_status(self):
         response = self._request('GET', BasicStatusGet)
-        on = response.find("Main_Zone/Basic_Status/Power_Control/Power").text
-        inp = response.find("Main_Zone/Basic_Status/Input/Input_Sel").text
-        mute = response.find("Main_Zone/Basic_Status/Volume/Mute").text
-        volume = response.find("Main_Zone/Basic_Status/Volume/Lvl/Val").text
+        on = response.find(self.zone("Basic_Status/Power_Control/Power")).text
+        inp = response.find(self.zone("Basic_Status/Input/Input_Sel")).text
+        mute = response.find(self.zone("Basic_Status/Volume/Mute")).text
+        volume = response.find(self.zone("Basic_Status/Volume/Lvl/Val")).text
         volume = int(volume) / 10.0
 
         status = BasicStatus(on, volume, mute, inp)
@@ -101,7 +115,7 @@ class RXV(object):
     def on(self):
         request_text = PowerControl.format(state=GetParam)
         response = self._request('GET', request_text)
-        power = response.find("Main_Zone/Power_Control/Power").text
+        power = response.find(self.zone("Power_Control/Power")).text
         assert power in ["On", "Standby"]
         return power == "On"
 
@@ -120,7 +134,7 @@ class RXV(object):
     def input(self):
         request_text = Input.format(input_name=GetParam)
         response = self._request('GET', request_text)
-        return response.find("Main_Zone/Input/Input_Sel").text
+        return response.find(self.zone("Input/Input_Sel")).text
 
     @input.setter
     def input(self, input_name):
@@ -235,7 +249,7 @@ class RXV(object):
     def volume(self):
         request_text = VolumeLevel.format(value=GetParam)
         response = self._request('GET', request_text)
-        vol = response.find('Main_Zone/Volume/Lvl/Val').text
+        vol = response.find(self.zone('Volume/Lvl/Val')).text
         return float(vol) / 10.0
 
     @volume.setter
@@ -261,7 +275,7 @@ class RXV(object):
     def mute(self):
         request_text = VolumeMute.format(state=GetParam)
         response = self._request('GET', request_text)
-        mute = response.find('Main_Zone/Volume/Mute').text
+        mute = response.find(self.zone('Volume/Mute')).text
         assert mute in ["On", "Off"]
         return mute == "On"
 
@@ -281,7 +295,7 @@ class RXV(object):
     def sleep(self):
         request_text = PowerControlSleep.format(sleep_value=GetParam)
         response = self._request('GET', request_text)
-        sleep = response.find("Main_Zone/Power_Control/Sleep").text
+        sleep = response.find(self.zone("Power_Control/Sleep")).text
         return sleep
 
     @sleep.setter
@@ -298,4 +312,3 @@ class RXV(object):
     def large_image_url(self):
         host = urlparse(self.ctrl_url).hostname
         return "http://{}:8080/BCO_device_lrg_icon.png".format(host)
-
